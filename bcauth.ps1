@@ -12,6 +12,14 @@ function Get-PlainText() {
         [Runtime.InteropServices.Marshal]::FreeBSTR($bstr);
     }
 }
+function Parse-JWTtoken([string]$token) {
+    if ($token.Contains(".") -and $token.StartsWith("eyJ")) {
+        $tokenPayload = $token.Split(".")[1].Replace('-', '+').Replace('_', '/')
+        while ($tokenPayload.Length % 4) { $tokenPayload += "=" }
+        return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($tokenPayload)) | ConvertFrom-Json
+    }
+    throw "Invalid token"
+}
 
 function New-BcAuthContext {
     Param(
