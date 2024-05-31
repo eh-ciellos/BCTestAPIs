@@ -66,7 +66,7 @@ function New-BcAuthContext {
     $accessToken = $null
     if ($clientSecret -or $clientAssertion) {
         if ($scopes.EndsWith('/')) {
-            $scopes += ".default"
+            $scopes += ".default offline_access"
         }
 
         $TokenRequestParams = @{
