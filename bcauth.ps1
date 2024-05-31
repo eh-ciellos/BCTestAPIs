@@ -123,7 +123,7 @@ function New-BcAuthContext {
     }
     else {
         if ($scopes.EndsWith('/')) {
-            $scopes += "user_impersonation offline_access"
+            $scopes += "user_impersonation"
         }
 
         if ($credential) {
