@@ -23,9 +23,9 @@ jobs:
         run: |
           . ./bcauth.ps1
           $token = Invoke-RestMethod -Method GET -Headers @{ "Authorization" = "bearer $ENV:ACTIONS_ID_TOKEN_REQUEST_TOKEN" } -Uri "$ENV:ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange"
-          az login --service-principal --username '${{ secrets.CLIENT_ID }}' --tenant '${{ secrets.TENANT_ID }}' --federated-token $token.value --allow-no-subscriptions
-          az account list
-          $response = az account get-access-token
-          $accesstoken = ($response | ConvertFrom-Json).accesstoken
-          New-BcAuthContext -ClientID '${{ secrets.CLIENT_ID }}' -ClientAssertion $accesstoken -scopes 'https://api.partner.microsoft.com/.default'
+          New-BcAuthContext -ClientID '${{ secrets.CLIENT_ID }}' -ClientAssertion $token.value 'https://api.partner.microsoft.com/.default'
+          #az login --service-principal --username '${{ secrets.CLIENT_ID }}' --tenant '${{ secrets.TENANT_ID }}' --federated-token $token.value --allow-no-subscriptions
+          #az account list
+          #$response = az account get-access-token
+          #$accesstoken = ($response | ConvertFrom-Json).accesstoken
 
