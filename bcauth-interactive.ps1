@@ -1,123 +1,78 @@
-# Import necessary functions from bcauth.ps1
-. "$PSScriptRoot/bcauth.ps1"
-
-# Function to Open Interactive Logon via Edge or WebView2
-function Get-AuthorizationCode {
-    Param(
-        [string] $tenantID = "common",
-        [string] $clientID = "1950a258-227b-4e31-a9cf-717495945fc2", # PowerShell AAD App ID
-        [string] $redirectUri = "http://localhost", # Redirect URI for authorization code
-        [string] $scopes = "https://api.businesscentral.dynamics.com/.default offline_access"
+function Get-BCInteractiveToken {
+    param(
+        [string]$TenantId = "46e85934-1fab-4533-a4ad-de92ce1fd81a",
+        [string]$ClientId = "1950a258-227b-4e31-a9cf-717495945fc2",
+        [string]$Scopes = "https://api.businesscentral.dynamics.com/.default offline_access",
+        [switch]$UseEmbeddedWebView
     )
 
-    # Build the authorization URL
-    $authUrl = "https://login.microsoftonline.com/$tenantID/oauth2/v2.0/authorize"
-    $queryParams = @{
-        client_id     = $clientID
-        response_type = "code"
-        redirect_uri  = $redirectUri
-        scope         = $scopes
-        response_mode = "query"
+    # Check for Microsoft Edge (optional, for user info)
+    $edgePath = (Get-Command "msedge.exe" -ErrorAction SilentlyContinue)?.Source
+    if (-not $edgePath) {
+        Write-Warning "Microsoft Edge is not installed or not in PATH. Interactive authentication will use the default browser."
+    } else {
+        Write-Host "Microsoft Edge found at: $edgePath"
     }
-    $queryString = ($queryParams.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join "&"
-    $fullUrl = "$authUrl?$queryString"
 
-    # Launch the browser (Edge or WebView2)
-    Start-Process "msedge.exe" -ArgumentList $fullUrl
-
-    # Listen for the authorization code on the redirect URI
-    Write-Host "Waiting for user to complete authentication..."
-    $listener = New-Object System.Net.HttpListener
-    $listener.Prefixes.Add("$redirectUri/")
-    $listener.Start()
-
-    try {
-        $context = $listener.GetContext()
-        $request = $context.Request
-        $response = $context.Response
-        $response.ContentType = "text/html"
-        $response.StatusCode = 200
-
-        # Send a response to the browser
-        $responseText = "<html><body><h1>Authentication complete. You may close this window.</h1></body></html>"
-        $response.OutputStream.Write((([System.Text.Encoding]::UTF8.GetBytes($responseText))), 0, $responseText.Length)
-        $response.Close()
-
-        # Extract the authorization code
-        $query = [System.Web.HttpUtility]::ParseQueryString($request.Url.Query)
-        $authCode = $query["code"]
-
-        if ($authCode) {
-            Write-Host -ForegroundColor Green "Authorization code received."
-            return $authCode
+    # Only check for WebView2 if -UseEmbeddedWebView is specified
+    if ($UseEmbeddedWebView) {
+        $webview2Reg = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F1E7E2A0-DA5B-4C6A-8A5A-7A3E2D5A6F7B}" -ErrorAction SilentlyContinue
+        if (-not $webview2Reg) {
+            Write-Warning "Microsoft Edge WebView2 Runtime is not installed. Embedded web view will not be available."
         } else {
-            Write-Host -ForegroundColor Red "Authorization code not received."
-            return $null
+            Write-Host "Microsoft Edge WebView2 Runtime found."
         }
-    } finally {
-        $listener.Stop()
-    }
-}
-
-# Function to Exchange Authorization Code for Access Token
-function Get-AccessToken {
-    Param(
-        [string] $tenantID = "common",
-        [string] $clientID = "1950a258-227b-4e31-a9cf-717495945fc2", # PowerShell AAD App ID
-        [string] $redirectUri = "http://localhost",
-        [string] $authCode,
-        [string] $scopes = "https://api.businesscentral.dynamics.com/.default offline_access"
-    )
-
-    # Token endpoint
-    $tokenUrl = "https://login.microsoftonline.com/$tenantID/oauth2/v2.0/token"
-
-    # Request body
-    $body = @{
-        grant_type    = "authorization_code"
-        client_id     = $clientID
-        code          = $authCode
-        redirect_uri  = $redirectUri
-        scope         = $scopes
     }
 
-    # Request token
     try {
-        $response = Invoke-RestMethod -Method POST -Uri $tokenUrl -Body $body -ContentType "application/x-www-form-urlencoded"
-        Write-Host -ForegroundColor Green "Access token received."
-        return @{
-            AccessToken = $response.access_token
-            ExpiresOn   = [DateTime]::UtcNow.AddSeconds($response.expires_in)
-            RefreshToken = $response.refresh_token
+        # Check if MSAL.PS module is installed
+        $msalModule = Get-Module -Name "MSAL.PS" -ListAvailable
+        if (-not $msalModule) {
+            Write-Host "MSAL.PS module not found. Installing..."
+            Install-Module -Name "MSAL.PS" -Scope Local -Force -AllowClobber
+        } else {
+            Write-Host "MSAL.PS module found."
         }
     } catch {
-        Write-Host -ForegroundColor Red "Failed to retrieve access token: $($_.Exception.Message)"
+        Write-Error "Failed to install or load MSAL.PS module: $_"
         return $null
     }
-}
-
-# Main Script
-function New-BcAuthInteractive {
-    Param(
-        [string] $tenantID = "common",
-        [string] $scopes = "https://api.businesscentral.dynamics.com/.default offline_access"
-    )
-
-    # Step 1: Get the Authorization Code
-    $authCode = Get-AuthorizationCode -tenantID $tenantID -scopes $scopes
-    if (!$authCode) {
-        Write-Host -ForegroundColor Red "Failed to retrieve authorization code."
+    # Import the MSAL.PS module
+    try {
+        Import-Module MSAL.PS -Scope Local -Force
+    } catch {
+        Write-Error "Failed to import MSAL.PS module: $_"
         return $null
     }
 
-    # Step 2: Exchange Authorization Code for Access Token
-    $authContext = Get-AccessToken -tenantID $tenantID -authCode $authCode -scopes $scopes
-    if ($authContext) {
-        Write-Host "Access Token:" $authContext.AccessToken
-        Write-Host "Expires On:" $authContext.ExpiresOn
+    if ($UseEmbeddedWebView) {
+        $authResult = Get-MsalToken -ClientId $ClientId -TenantId $TenantId -Scopes $Scopes -Interactive -UseEmbeddedWebView
     } else {
-        Write-Host -ForegroundColor Red "Authentication failed."
+        $authResult = Get-MsalToken -ClientId $ClientId -TenantId $TenantId -Scopes $Scopes -Interactive
     }
 
-    return $authContext
+    if ($authResult) {
+        Write-Host "Access Token:" $authResult.AccessToken
+        Write-Host "Expires On:" $authResult.ExpiresOn
+        return $authResult
+    } else {
+        Write-Error "Failed to obtain access token."
+        return $null
+    }
 }
+
+# Example usage:
+$authResult = Get-BCInteractiveToken -TenantId "46e85934-1fab-4533-a4ad-de92ce1fd81a" `
+    -ClientId "1950a258-227b-4e31-a9cf-717495945fc2" `
+    -Scopes "https://api.businesscentral.dynamics.com/.default offline_access"
+
+# Parse and display token claims (optional)
+. "c:\repos\BCTestAPIs\bcauth.ps1"
+$jwt = Parse-JWTtoken $authResult.AccessToken
+Write-Host "Token claims:" ($jwt | ConvertTo-Json -Depth 5)
+
+# Use the token in a Business Central API call
+$bcApiUrl = "https://api.businesscentral.dynamics.com/v2.0/$($authResult.TenantId)/Demo/api/v2.0/companies"
+$response = Invoke-RestMethod -Uri $bcApiUrl -Headers @{ Authorization = "Bearer $($authResult.AccessToken)" }
+
+Write-Host "API Response:" ($response | ConvertTo-Json -Depth 5)
